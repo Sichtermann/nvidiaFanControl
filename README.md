@@ -1,6 +1,6 @@
 # GPU Fan Control Script
 
-This repository contains a Bash script for controlling the fan speed of a GPU based on its temperature. The script reads the GPU temperature using `nvidia-smi` and adjusts the fan speed accordingly, using a linear interpolation algorithm. The PWM (Pulse Width Modulation) value for the fan speed is set in steps of 5 units. I use it for my Nvidia A100 in my desktop PC together with a nzxt fan-controller and a powerful axial ventilator.
+This repository contains a Bash script for controlling the fan speed of a GPU based on its temperature. The script reads the GPU temperature using `nvidia-smi` and adjusts the fan speed accordingly, using a linear interpolation algorithm. The PWM (Pulse Width Modulation) value for the fan speed is set in steps of 5 units. I use it for my Nvidia A100 in my desktop PC together with a nzxt fan-controller and a powerful radial ventilator.
 
 ## Script Details
 
