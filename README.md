@@ -16,13 +16,13 @@ The better order of preference is:
 2. direct `NVML` calls via `libnvidia-ml.so`
 3. no `nvidia-smi` fallback in the controller loop
 
-On this machine, as checked on May 14, 2026, the system exposes `nzxtsmart2` under `/sys/class/hwmon/hwmon8`, but it does **not** currently expose an `nvidia` hwmon node there. That means the practical direct path today is `NVML`, not `nvidia-smi`.
-
 ## Files
 
 - `gpu-fan-control.py`: main controller
 - `gpu-fan-control.service`: systemd unit
+- `gpu-fan-control.env`: sample install-time config
 - `gpu-fan-control.env.example`: optional config file template
+- `install-live.sh`: helper script to install the service on a host
 
 ## Safety Behavior
 
@@ -39,28 +39,40 @@ The controller is built around fail-safe defaults:
 
 ## Installation
 
-1. Install the script:
+1. Review and tune the config:
+
+```bash
+cp gpu-fan-control.env.example gpu-fan-control.env
+```
+
+Edit `gpu-fan-control.env` for your hardware before installing.
+
+2. Install the script:
 
 ```bash
 sudo install -m 0755 gpu-fan-control.py /usr/local/bin/gpu-fan-control.py
 ```
 
-2. Install the unit:
+3. Install the unit:
 
 ```bash
 sudo install -m 0644 gpu-fan-control.service /etc/systemd/system/gpu-fan-control.service
 ```
 
-3. Optional: create `/etc/default/gpu-fan-control` from the example file and tune the values.
+4. Install the environment file:
 
-4. Reload and restart:
+```bash
+sudo install -m 0644 gpu-fan-control.env /etc/default/gpu-fan-control
+```
+
+5. Reload and restart:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now gpu-fan-control.service
 ```
 
-5. Verify:
+6. Verify:
 
 ```bash
 sudo /usr/local/bin/gpu-fan-control.py --print-temp
@@ -68,11 +80,18 @@ sudo systemctl status gpu-fan-control.service
 journalctl -u gpu-fan-control.service -f
 ```
 
-## Notes For This Host
+## Configuration Notes
 
-- GPU detected: `NVIDIA A100-PCIE-40GB`
-- Driver detected: `595.71.05`
-- Current live service on this host is using `/mnt/disks/work/dev/servarr/gpu-fan-control.sh`
-- Current live temperature source is `nvidia-smi`
+- `NZXT_HWMON_NAME`, `PWM_CHANNEL`, and `FAN_CHANNEL` must match your controller's hwmon layout under `/sys/class/hwmon`.
+- The controller prefers `sysfs` temperature from `NVIDIA_HWMON_NAME=nvidia` when available, otherwise it falls back to `NVML`.
+- If your system has multiple GPUs, set `GPU_INDEX` or uncomment and set `GPU_PCI_BUS_ID` for a stable target.
+- `SAFE_PWM` is applied on startup, shutdown, and repeated read/control failures.
+- `EMERGENCY_PWM` is applied when the GPU reaches `CRITICAL_TEMP` or fan feedback indicates a likely fault.
 
-If you migrate the live service, update it to point at `gpu-fan-control.py` and move the environment values from the old unit into `/etc/default/gpu-fan-control`.
+## Quick Install
+
+If you want a single command install flow on a host, tune `gpu-fan-control.env` first and then run:
+
+```bash
+sudo ./install-live.sh
+```
