@@ -1,80 +1,78 @@
-# GPU Fan Control Script
+# GPU Fan Control
 
-This repository contains a Bash script for controlling the fan speed of a GPU based on its temperature. The script reads the GPU temperature using `nvidia-smi` and adjusts the fan speed accordingly, using a linear interpolation algorithm. The PWM (Pulse Width Modulation) value for the fan speed is set in steps of 5 units. I use it for my Nvidia A100 in my desktop PC together with a nzxt fan-controller and a powerful radial ventilator.
+This repo controls an external fan for a GPU by writing PWM values to an NZXT Smart Device v2 (`nzxtsmart2`). The improved version in this repo avoids polling `nvidia-smi` in a shell loop.
 
-## Script Details
+## Why Change It
 
-The script `gpu-fan-control.sh` performs the following functions:
-- Reads the current GPU temperature.
-- Calculates the appropriate fan speed (PWM value) based on the GPU temperature.
-- Sets the fan speed by writing to the PWM control file.
-- In case of an error in reading the GPU temperature, sets the fan speed to a safe default value.
+`nvidia-smi` is a userspace CLI layered on top of NVML. It works, but it is the wrong level for a long-running control loop:
 
-## Prerequisites
+- every sample spawns a process
+- parsing CLI output is less robust than calling the driver API directly
+- it is slower and adds another failure surface
 
-- The script requires `nvidia-smi` to be available on the system for reading GPU temperatures.
-- Write access to the PWM control file (typically requires root privileges).
+The better order of preference is:
+
+1. NVIDIA temperature from `sysfs hwmon` if the driver exposes it
+2. direct `NVML` calls via `libnvidia-ml.so`
+3. no `nvidia-smi` fallback in the controller loop
+
+On this machine, as checked on May 14, 2026, the system exposes `nzxtsmart2` under `/sys/class/hwmon/hwmon8`, but it does **not** currently expose an `nvidia` hwmon node there. That means the practical direct path today is `NVML`, not `nvidia-smi`.
+
+## Files
+
+- `gpu-fan-control.py`: main controller
+- `gpu-fan-control.service`: systemd unit
+- `gpu-fan-control.env.example`: optional config file template
+
+## Safety Behavior
+
+The controller is built around fail-safe defaults:
+
+- writes `SAFE_PWM` on startup before entering the loop
+- writes `SAFE_PWM` on shutdown and on any control/read failure
+- exits after repeated failures so systemd can restart it cleanly
+- writes `EMERGENCY_PWM` immediately if temperature reaches `CRITICAL_TEMP`
+- uses systemd watchdog heartbeats so a stuck controller is restarted
+- treats unexpectedly low fan RPM at high PWM as a fault and pushes emergency PWM
+- uses an exclusive lock in `/run/gpu-fan-control/lock`
+- prefers kernel `sysfs` temperature when available, otherwise uses direct `NVML`
 
 ## Installation
 
-1. Clone this repository or download the `gpu-fan-control.sh` script.
-2. Place the script in a suitable directory, such as `/usr/local/bin/`:
-   ```bash
-   sudo cp gpu-fan-control.sh /usr/local/bin/
-   sudo chmod +x /usr/local/bin/gpu-fan-control.sh
-   ```
+1. Install the script:
 
-## Setting Up as a Systemd Service
+```bash
+sudo install -m 0755 gpu-fan-control.py /usr/local/bin/gpu-fan-control.py
+```
 
-To run the script as a service that starts on system boot:
+2. Install the unit:
 
-1. **Create a Systemd Service File**: Create a file named `gpu-fan-control.service` in `/etc/systemd/system/`.
+```bash
+sudo install -m 0644 gpu-fan-control.service /etc/systemd/system/gpu-fan-control.service
+```
 
-   ```bash
-   sudo nano /etc/systemd/system/gpu-fan-control.service
-   ```
+3. Optional: create `/etc/default/gpu-fan-control` from the example file and tune the values.
 
-   Add the following contents to the file:
+4. Reload and restart:
 
-   ```ini
-   [Unit]
-   Description=GPU Fan Control Service
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now gpu-fan-control.service
+```
 
-   [Service]
-   ExecStart=/usr/local/bin/gpu-fan-control.sh
-   Restart=always
+5. Verify:
 
-   [Install]
-   WantedBy=multi-user.target
-   ```
+```bash
+sudo /usr/local/bin/gpu-fan-control.py --print-temp
+sudo systemctl status gpu-fan-control.service
+journalctl -u gpu-fan-control.service -f
+```
 
-2. **Reload Systemd**: Inform systemd that a new service file has been added:
+## Notes For This Host
 
-   ```bash
-   sudo systemctl daemon-reload
-   ```
+- GPU detected: `NVIDIA A100-PCIE-40GB`
+- Driver detected: `595.71.05`
+- Current live service on this host is using `/mnt/disks/work/dev/servarr/gpu-fan-control.sh`
+- Current live temperature source is `nvidia-smi`
 
-3. **Enable and Start the Service**: Enable the service to start on boot, and then start the service:
-
-   ```bash
-   sudo systemctl enable gpu-fan-control
-   sudo systemctl start gpu-fan-control
-   ```
-
-4. **Check the Service Status**: Verify that the service is running:
-
-   ```bash
-   sudo systemctl status gpu-fan-control
-   ```
-
-## License
-
-[Specify the license under which this project is available, e.g., MIT, GPL, etc.]
-
-## Contributing
-
-Contributions to this project are welcome. Please fork the repository and submit a pull request with your changes.
-
----
-
-**Note**: This script is provided as is, and it comes with no guarantees. It's essential to test it thoroughly in your environment before using it in a production setup.
+If you migrate the live service, update it to point at `gpu-fan-control.py` and move the environment values from the old unit into `/etc/default/gpu-fan-control`.
